@@ -1,0 +1,21 @@
+# Environment variables (API Keys)
+.env
+.env.*
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Virtual Environment
+venv/
+ENV/
+
+# Database / Local Checkpoints
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Streamlit Local Config / Secrets
+.streamlit/secrets.toml
