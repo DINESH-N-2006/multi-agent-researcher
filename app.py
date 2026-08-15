@@ -1,7 +1,7 @@
 """
 app.py
 ------
-MULTI RESEARCH AGENT SYSTEM
+MULTI RESEARCH AGENT SYSTEM (Powered by Groq)
 Professional editorial-grade multi-page interface for multi-agent deep research.
 """
 
@@ -33,6 +33,8 @@ if "thread_id" not in st.session_state:
     st.session_state.thread_id = None
 if "interrupt_payload" not in st.session_state:
     st.session_state.interrupt_payload = None
+if "draft_report" not in st.session_state:
+    st.session_state.draft_report = None
 if "final_report" not in st.session_state:
     st.session_state.final_report = None
 if "error" not in st.session_state:
@@ -51,6 +53,7 @@ def reset_state() -> None:
     st.session_state.stage = "idle"
     st.session_state.thread_id = None
     st.session_state.interrupt_payload = None
+    st.session_state.draft_report = None
     st.session_state.final_report = None
     st.session_state.error = None
     st.session_state.topic = ""
@@ -62,7 +65,6 @@ def run_config() -> dict:
 # -- PDF GENERATION HELPERS --------------------------------------------------
 def convert_mermaid_to_html_boxes(text: str) -> str:
     """Finds raw mermaid code blocks and converts them into clean HTML flowchart blocks for PDF."""
-
     mermaid_pattern = re.compile(r'```(?:mermaid)?\s*(.*?)\s*```', re.DOTALL)
 
     def replace_mermaid(match):
@@ -101,7 +103,6 @@ def convert_mermaid_to_html_boxes(text: str) -> str:
         """
 
     cleaned_text = mermaid_pattern.sub(replace_mermaid, text)
-
     raw_flow_pattern = re.compile(r'(graph\s+TD|flowchart\s+LR)[\s\S]*?(?=\n\n|\Z)', re.IGNORECASE)
     cleaned_text = raw_flow_pattern.sub(replace_mermaid, cleaned_text)
 
@@ -110,7 +111,6 @@ def convert_mermaid_to_html_boxes(text: str) -> str:
 
 def convert_markdown_to_pdf(md_text: str) -> bytes:
     """Converts Markdown into a clean PDF, replacing raw diagrams with formatted HTML blocks."""
-
     formatted_md = convert_mermaid_to_html_boxes(md_text)
     html_content = markdown2.markdown(formatted_md, extras=["tables", "fenced-code-blocks", "strike"])
 
@@ -140,7 +140,7 @@ def convert_markdown_to_pdf(md_text: str) -> bytes:
     pisa.CreatePDF(styled_html, dest=pdf_buffer)
     return pdf_buffer.getvalue()
 
-# -- INLINE SVG ICONS (professional, no emoji) -----------------------------
+# -- INLINE SVG ICONS ------------------------------------------------------
 ICON = {
     "diamond": '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12l4 6-10 12L2 9z"/><path d="M11 3 8 9l4 12 4-12-3-6"/><path d="M2 9h20"/></svg>',
     "home": '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
@@ -170,10 +170,10 @@ st.markdown("""
         --text-secondary: #9096A4;
         --text-tertiary: #5A6070;
         --text-quaternary: #3A4050;
-        --brass: #C89653;
-        --brass-hover: #D4A362;
-        --brass-dim: rgba(200,150,83,0.10);
-        --brass-line: rgba(200,150,83,0.30);
+        --brass: #F55036; /* Groq Flame Accent */
+        --brass-hover: #FF6B52;
+        --brass-dim: rgba(245,80,54,0.10);
+        --brass-line: rgba(245,80,54,0.30);
         --moss: #6B9B7B;
         --moss-dim: rgba(107,155,123,0.10);
         --moss-line: rgba(107,155,123,0.28);
@@ -190,7 +190,7 @@ st.markdown("""
         position: fixed;
         inset: 0;
         background:
-            radial-gradient(ellipse at 85% 0%, rgba(200,150,83,0.035) 0%, transparent 45%),
+            radial-gradient(ellipse at 85% 0%, rgba(245,80,54,0.035) 0%, transparent 45%),
             radial-gradient(ellipse at 0% 100%, rgba(255,255,255,0.02) 0%, transparent 40%);
         pointer-events: none;
         z-index: 0;
@@ -344,7 +344,7 @@ st.markdown("""
     }
     .cap-card .cap-desc { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.55; }
 
-    /* INPUT */
+    /* INPUTS */
     .stTextInput input {
         background-color: var(--surface) !important;
         border: 1px solid var(--border-mid) !important;
@@ -382,7 +382,7 @@ st.markdown("""
     .stButton > button[kind="primary"],
     .stDownloadButton > button[kind="primary"] {
         background: var(--brass) !important;
-        color: var(--ink) !important;
+        color: #FFFFFF !important;
         border: 1px solid var(--brass) !important;
         border-radius: 8px !important;
         font-family: 'Inter Tight', sans-serif !important;
@@ -454,7 +454,7 @@ st.markdown("""
     .stamp-done::before { content: "✓"; font-size: 0.8rem; line-height: 1; flex-shrink: 0; }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
-    /* CONTAINERS */
+    /* CONTAINERS & LABELS */
     div[data-testid="stVerticalBlockBorderWrapper"] {
         border-color: var(--border-mid) !important;
         background: var(--surface) !important;
@@ -581,42 +581,56 @@ def render_sidebar_node_path(container, current_node=None):
                     unsafe_allow_html=True,
                 )
 
-def run_graph_with_progress(graph_input, path_container) -> dict:
-    with st.status("Agents at work…", expanded=True) as status:
-        try:
-            for chunk in research_graph.stream(graph_input, config=run_config(), stream_mode="updates"):
-                if "__interrupt__" in chunk:
-                    st.session_state.execution_path.append("human_review")
-                    status.update(label="Draft ready for human approval", state="complete")
-                    render_sidebar_node_path(path_container, current_node="human_review")
-                    return chunk
-
-                for node_name in chunk:
-                    st.session_state.execution_path.append(node_name)
-                    meta = NODE_METADATA.get(node_name, {"label": node_name})
-                    st.markdown(f"→ Executed  **{meta['label']}**")
-                    render_sidebar_node_path(path_container, current_node=node_name)
-
-            status.update(label="Task finished successfully", state="complete")
-        except Exception as e:
-            status.update(label="Execution error occurred", state="error")
-            raise e
-
-    return research_graph.get_state(run_config()).values
-
 def handle_graph_result(result: dict) -> None:
+    """Safely extracts execution outputs into Streamlit Session State."""
     if "__interrupt__" in result:
-        st.session_state.interrupt_payload = result["__interrupt__"][0].value
+        payload = result["__interrupt__"][0].value
+        st.session_state.interrupt_payload = payload
         st.session_state.stage = "awaiting_approval"
+
+        draft = ""
+        if isinstance(payload, dict):
+            draft = payload.get("draft_report") or payload.get("draft") or ""
+        
+        if not draft:
+            current_values = research_graph.get_state(run_config()).values
+            draft = current_values.get("draft_report") or current_values.get("raw_research") or ""
+
+        st.session_state.draft_report = draft
     else:
         st.session_state.final_report = result.get("final_report", "")
         st.session_state.stage = "done"
-        st.session_state.celebrate = True
         st.session_state.recent_projects.insert(0, {
             "topic": st.session_state.topic,
             "status": "Completed",
             "date": "Just Now"
         })
+
+def run_graph_with_progress(graph_input, path_container) -> None:
+    with st.status("Groq LPU Swarm at work…", expanded=True) as status:
+        try:
+            last_result = {}
+            for chunk in research_graph.stream(graph_input, config=run_config(), stream_mode="updates"):
+                last_result = chunk
+                if "__interrupt__" in chunk:
+                    st.session_state.execution_path.append("human_review")
+                    status.update(label="Draft ready for human approval", state="complete")
+                    render_sidebar_node_path(path_container, current_node="human_review")
+                    handle_graph_result(chunk)
+                    return
+
+                for node_name in chunk:
+                    st.session_state.execution_path.append(node_name)
+                    meta = NODE_METADATA.get(node_name, {"label": node_name})
+                    st.markdown(f"→ Executed **{meta['label']}**")
+                    render_sidebar_node_path(path_container, current_node=node_name)
+
+            status.update(label="Task finished successfully", state="complete")
+            final_values = research_graph.get_state(run_config()).values
+            handle_graph_result(final_values)
+        except Exception as e:
+            status.update(label="Execution error occurred", state="error")
+            st.session_state.error = str(e)
 
 # -- SIDEBAR ---------------------------------------------------------------
 with st.sidebar:
@@ -628,9 +642,9 @@ with st.sidebar:
                 {ICON["diamond"]}
             </div>
             <div>
-                <div style="font-family:'Newsreader',serif; font-weight:600; font-size:1.05rem; color:var(--text-primary); line-height:1.1;">Agent System</div>
+                <div style="font-family:'Newsreader',serif; font-weight:600; font-size:1.05rem; color:var(--text-primary); line-height:1.1;">Groq Agent System</div>
                 <div style="font-family:'JetBrains Mono',monospace; font-size:0.6rem; letter-spacing:0.18em; text-transform:uppercase;
-                            color:var(--text-quaternary); margin-top:4px;">Research · v2.0</div>
+                            color:var(--text-quaternary); margin-top:4px;">LPU Engine · v2.0</div>
             </div>
         </div>
         """,
@@ -690,14 +704,14 @@ with st.sidebar:
             st.session_state.active_page = "hub"
             st.rerun()
 
-# API Key check
-if not app_config.GEMINI_API_KEY:
-    st.error("GEMINI_API_KEY is missing from `.env` file.")
+# GROQ API KEY VALIDATION
+if not app_config.GROQ_API_KEY:
+    st.error("GROQ_API_KEY is missing from `.env` file. Please set GROQ_API_KEY=gsk_... in `.env`.")
     st.stop()
 
 
 # ===========================================================================
-# PAGE 1: HOME
+# PAGE 1: HUB / HOME
 # ===========================================================================
 if st.session_state.active_page == "hub":
 
@@ -708,12 +722,12 @@ if st.session_state.active_page == "hub":
                 <div class="hero-mark-inner">{ICON["diamond"]}</div>
             </div>
             <div class="hero-eyebrow">
-                <span class="dash"></span>Multi-Agent Research Platform<span class="dash"></span>
+                <span class="dash"></span>Groq LPU Multi-Agent Research<span class="dash"></span>
             </div>
             <h1 class="hero-title">How can I <em>assist</em> your research today?</h1>
             <p class="hero-subtitle">
-                A coordinated workspace where autonomous agents gather sources,
-                verify facts, and draft publication-ready reports — with you in the loop.
+                Powered by ultra-fast Groq LPU inference. Coordinated agents gather sources,
+                verify facts, and draft reports at record speed.
             </p>
         </div>
         """,
@@ -738,7 +752,7 @@ if st.session_state.active_page == "hub":
             )
         with col_b:
             st.markdown(
-                '<div style="padding-top: 14px;"><span class="mono-label">3 agents · avg. 90s · human approval gate</span></div>',
+                '<div style="padding-top: 14px;"><span class="mono-label">Groq Llama-3.3 · ~10s execution</span></div>',
                 unsafe_allow_html=True,
             )
 
@@ -799,266 +813,152 @@ if st.session_state.active_page == "hub":
                 <div class="cap-icon">{ICON["user"]}</div>
                 <div class="cap-tag">Capability · 03</div>
                 <div class="cap-title">Human-in-the-loop</div>
-                <div class="cap-desc">Review each draft before export. Request revisions or approve for PDF and Markdown output.</div>
+                <div class="cap-desc">Review each draft before export. Request revisions or approve with a single click.</div>
             </div>
             """,
             unsafe_allow_html=True
         )
 
+
 # ===========================================================================
 # PAGE 2: RESEARCH STUDIO
 # ===========================================================================
 elif st.session_state.active_page == "studio":
-    st.markdown(
-        """
-        <div class="section-header">
-            <h2 style="margin:0;">Research Studio</h2>
-            <div class="rule"></div>
-            <span class="mono-label" style="color:var(--text-quaternary);">Live</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
-    if not st.session_state.topic:
-        st.warning("No active topic. Please start a query from the Home page.")
-        if st.button("← Go to Home"):
-            st.session_state.active_page = "hub"
-            st.rerun()
-        st.stop()
+    st.markdown("## Research Studio")
+    st.caption("Live Groq workflow execution and human verification hub.")
+    st.divider()
 
-    st.markdown(
-        f"""
-        <div class="topic-plate">
-            <div class="label">Active Topic</div>
-            <div class="value">{st.session_state.topic}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    if st.session_state.stage == "idle":
+        st.info("No active research session. Enter a topic on the Home page to start.")
 
-    if st.session_state.stage == "running":
-        config = st.session_state.research_config
-        simplified_instructions = (
-            f"{config['instructions']}\n"
-            "IMPORTANT: Write in plain, clear, easy-to-understand English. "
-            "Avoid overly technical jargon and define complex terms simply."
+    elif st.session_state.stage == "running":
+        st.markdown(
+            f"""
+            <div class="topic-plate">
+                <div class="label">Current Research Topic</div>
+                <div class="value">{st.session_state.topic}</div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
-        initial_state = {
+        
+        initial_input = {
             "topic": st.session_state.topic,
-            "depth": config["depth"],
-            "style": config["style"],
-            "custom_instructions": simplified_instructions,
-            "raw_research": None,
-            "sources": [],
-            "fact_check_notes": None,
-            "verified": None,
-            "draft_report": None,
-            "approval_status": None,
-            "approval_feedback": None,
-            "final_report": None,
             "revision_count": 0,
+            "approval_status": "pending",
+            "approval_feedback": "",
+            "raw_research": "",
+            "draft_report": "",
+            "final_report": "",
+            "sources": [],
+            "fact_check_notes": "",
+            "verified": False
         }
-        try:
-            result = run_graph_with_progress(initial_state, sidebar_path_container)
-            handle_graph_result(result)
-        except Exception as e:
-            st.session_state.error = str(e)
+        
+        run_graph_with_progress(initial_input, sidebar_path_container)
         st.rerun()
 
     elif st.session_state.stage == "awaiting_approval":
-        payload = st.session_state.interrupt_payload
-        current_state_values = research_graph.get_state(run_config()).values
-        sources = current_state_values.get("sources", [])
-        fact_check_notes = current_state_values.get("fact_check_notes", "No additional notes.")
-
-        st.info("Draft ready. Review the report below, then approve or request revisions.")
-
-        with st.expander("Discovered sources & fact-check notes", expanded=False):
-            st.markdown("**Verification summary**")
-            st.write(fact_check_notes)
-            st.divider()
-            st.markdown("**Web sources**")
-            if sources:
-                for idx, source in enumerate(sources, 1):
-                    if isinstance(source, dict):
-                        title = source.get("title", f"Source {idx}")
-                        url = source.get("url", "#")
-                        st.markdown(f"{idx}. [{title}]({url})")
-                    else:
-                        st.markdown(f"- {source}")
-            else:
-                st.caption("No web links recorded.")
-
-        with st.container(border=True):
-            st.markdown('<div class="mono-label" style="margin-bottom:12px;">Current draft</div>', unsafe_allow_html=True)
-            st.markdown(payload["draft_report"])
-
-        st.write("")
-        col1, col2 = st.columns(2)
-
-        with col1:
-            if st.button("Approve report  ✓", type="primary", use_container_width=True):
-                try:
-                    decision = {"decision": "approved", "feedback": ""}
-                    result = run_graph_with_progress(Command(resume=decision), sidebar_path_container)
-                    handle_graph_result(result)
-                except Exception as e:
-                    st.session_state.error = str(e)
-                st.rerun()
-
-        with col2:
-            if st.button("Request revisions", use_container_width=True):
-                st.session_state.show_feedback_box = True
-
-        if st.session_state.get("show_feedback_box"):
-            st.write("")
-            with st.container(border=True):
-                st.markdown('<div class="mono-label" style="margin-bottom:10px;">Revision instructions</div>', unsafe_allow_html=True)
-                feedback = st.text_area(
-                    "Feedback Input",
-                    placeholder="e.g. Simplify the terms used, add a section explaining how it works…",
-                    label_visibility="collapsed",
-                    height=120,
-                )
-
-                if st.button("Submit to agents  →", type="primary"):
-                    if feedback.strip():
-                        try:
-                            revised_feedback = (
-                                f"REVISION REQUEST: {feedback.strip()}\n"
-                                "INSTRUCTION: Rewrite the report in clear, simple language addressing the user's specific feedback above."
-                            )
-                            decision = {"decision": "rejected", "feedback": revised_feedback}
-                            result = run_graph_with_progress(Command(resume=decision), sidebar_path_container)
-                            handle_graph_result(result)
-                            st.session_state.show_feedback_box = False
-                        except Exception as e:
-                            st.session_state.error = str(e)
-                        st.rerun()
-                    else:
-                        st.warning("Please type your feedback before submitting.")
-
-    elif st.session_state.stage == "done":
-        if st.session_state.get("celebrate"):
-            st.balloons()
-            st.session_state.celebrate = False
+        snapshot = research_graph.get_state(run_config())
+        rev_count = snapshot.values.get("revision_count", 0)
 
         st.markdown(
             f"""
-            <div style="display:flex; align-items:center; gap:10px; padding:12px 16px;
-                        background: var(--moss-dim); border:1px solid var(--moss-line); border-radius:8px;
-                        margin-bottom: 20px;">
-                <span style="color: var(--moss);">{ICON["check"]}</span>
-                <span style="font-family:'JetBrains Mono',monospace; font-size:0.78rem;
-                             letter-spacing:0.08em; text-transform:uppercase; color: var(--moss); font-weight:600;">
-                    Final report approved · ready for export
-                </span>
+            <div class="topic-plate">
+                <div class="label">REVIEWING DRAFT · REVISION {rev_count}</div>
+                <div class="value">{st.session_state.topic}</div>
             </div>
             """,
-            unsafe_allow_html=True,
+            unsafe_allow_html=True
         )
 
+        st.subheader("Editorial Draft Review")
+
+        # Robust draft extraction logic
+        draft_text = st.session_state.get("draft_report")
+        if not draft_text and isinstance(st.session_state.interrupt_payload, dict):
+            draft_text = st.session_state.interrupt_payload.get("draft_report")
+        if not draft_text:
+            draft_text = snapshot.values.get("draft_report") or snapshot.values.get("raw_research")
+
+        if draft_text and str(draft_text).strip():
+            with st.container(border=True):
+                st.markdown(draft_text)
+        else:
+            st.warning("Draft content was empty. Displaying raw research fallback:")
+            with st.container(border=True):
+                st.markdown(snapshot.values.get("raw_research", "No research output returned."))
+
+        st.divider()
+        st.subheader("Human Decision Gate 🔗")
+
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            if st.button("✓ Approve & Publish Final Report", type="primary", use_container_width=True):
+                run_graph_with_progress(Command(resume={"decision": "approved"}), sidebar_path_container)
+                st.rerun()
+
+        with col_b:
+            feedback_input = st.text_input("Request Revisions (Optional)", placeholder="e.g. Focus more on recent market data...")
+            if st.button("🔄 Send Feedback to Writers", use_container_width=True):
+                if feedback_input:
+                    run_graph_with_progress(
+                        Command(resume={"decision": "rejected", "feedback": feedback_input}),
+                        sidebar_path_container
+                    )
+                    st.rerun()
+                else:
+                    st.warning("Please enter feedback before requesting revisions.")
+
+    elif st.session_state.stage == "done":
+        st.success("🎉 Research & Editorial Process Complete!")
+        
         with st.container(border=True):
             st.markdown(st.session_state.final_report)
 
-        st.write("")
-
-        col1, col2 = st.columns(2)
-        file_slug = st.session_state.topic.lower().replace(" ", "_") if st.session_state.topic else "research"
-        pdf_data = convert_markdown_to_pdf(st.session_state.final_report)
-
-        with col1:
-            st.download_button(
-                "Download PDF  ↓",
-                data=pdf_data,
-                file_name=f"{file_slug}_report.pdf",
-                mime="application/pdf",
-                type="primary",
-                use_container_width=True,
-            )
-
-        with col2:
-            st.download_button(
-                "Download Markdown  ↓",
-                data=st.session_state.final_report,
-                file_name=f"{file_slug}_report.md",
-                mime="text/markdown",
-                use_container_width=True,
-            )
+        st.divider()
+        pdf_bytes = convert_markdown_to_pdf(st.session_state.final_report)
+        st.download_button(
+            label="📄 Download Report (PDF)",
+            data=pdf_bytes,
+            file_name=f"Research_Report_{st.session_state.topic.replace(' ', '_')}.pdf",
+            mime="application/pdf",
+            type="primary"
+        )
 
 
 # ===========================================================================
 # PAGE 3: ANALYTICS
 # ===========================================================================
 elif st.session_state.active_page == "analytics":
-    st.markdown(
-        """
-        <div class="section-header">
-            <h2 style="margin:0;">System Analytics</h2>
-            <div class="rule"></div>
-            <span class="mono-label" style="color:var(--text-quaternary);">Architecture · Session</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.write("")
 
-    col_graph, col_logs = st.columns([1, 1])
+    st.markdown("## Workspace Analytics & History")
+    st.caption("Overview of past research tasks, system runtime, and execution history.")
+    st.divider()
 
-    with col_graph:
-        with st.container(border=True):
-            st.markdown('<div class="mono-label" style="margin-bottom:12px;">Workflow graph</div>', unsafe_allow_html=True)
-            try:
-                graph_image = research_graph.get_graph().draw_mermaid_png()
-                st.image(graph_image, caption="Multi Research Agent System — flow", use_container_width=True)
-            except Exception:
-                st.code(
-                    """
-  [START]
-     │
-     ▼
-┌──────────┐
-│ research │ (Web Search)
-└────┬─────┘
-     │
-     ▼
-┌──────────────────────┐
-│ fact_check_and_write │
-└──────────┬───────────┘
-           │
-           ▼
-   ( Human Review )
-      │        │
- Approved    Rejected
-      │        │
-      ▼        └─────► [research]
-   [END]
-                    """,
-                    language="text"
-                )
+    st.markdown("### Recent Projects")
+    for proj in st.session_state.recent_projects:
+        st.markdown(
+            f"""
+            <div class="session-line">
+                <div>
+                    <span class="v" style="font-weight:600;">{proj['topic']}</span>
+                </div>
+                <div>
+                    <span class="k">{proj['date']}</span> · <span style="color:var(--moss); font-weight:600;">{proj['status']}</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
-    with col_logs:
-        with st.container(border=True):
-            st.markdown('<div class="mono-label" style="margin-bottom:12px;">Session details</div>', unsafe_allow_html=True)
-            st.markdown(
-                f"""
-                <div class="session-line"><span class="k">Thread ID</span><span class="v">{st.session_state.thread_id or 'N / A'}</span></div>
-                <div class="session-line"><span class="k">Status</span><span class="v">{st.session_state.stage}</span></div>
-                <div class="session-line"><span class="k">Steps Run</span><span class="v">{len(st.session_state.execution_path)}</span></div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            st.write("")
-            st.markdown('<div class="mono-label" style="margin-top:8px; margin-bottom:8px;">Execution log</div>', unsafe_allow_html=True)
-            if st.session_state.execution_path:
-                for idx, step in enumerate(st.session_state.execution_path, 1):
-                    st.markdown(
-                        f'<div style="font-family:\'JetBrains Mono\',monospace; font-size:0.78rem; color:var(--text-secondary); padding:4px 0;">'
-                        f'<span style="color:var(--text-quaternary);">{idx:02d}</span> &nbsp;→&nbsp; '
-                        f'<span style="color:var(--brass);">{step}</span></div>',
-                        unsafe_allow_html=True,
-                    )
-            else:
-                st.caption("No log history for this session.")
+    st.divider()
+    st.markdown("### Execution Session Parameters")
+    st.json({
+        "thread_id": st.session_state.thread_id,
+        "stage": st.session_state.stage,
+        "execution_steps": len(st.session_state.execution_path),
+        "parameters": st.session_state.get("research_config", {})
+    })

@@ -41,15 +41,22 @@ class Config:
     """Central configuration for the application."""
 
     # --- LLM provider settings ---
+    GROQ_API_KEY: str = get_setting("GROQ_API_KEY", "")
     GEMINI_API_KEY: str = get_setting("GEMINI_API_KEY", "")
 
+    # Default model ID for Groq
     MODEL_NAME: str = get_setting(
         "MODEL_NAME",
-        "gemini/gemini-2.5-flash"
+        "llama-3.3-70b-versatile"
     )
 
     TEMPERATURE: float = float(
         get_setting("TEMPERATURE", "0.3")
+    )
+
+    # --- Expanded token limit for long, exhaustive reports ---
+    MAX_TOKENS: int = int(
+        get_setting("MAX_TOKENS", "4096")
     )
 
     # --- Workflow settings ---
@@ -69,10 +76,11 @@ class Config:
     def validate(cls) -> None:
         """Validate required configuration."""
 
-        if not cls.GEMINI_API_KEY:
+        # Require at least one API key (preferring GROQ_API_KEY)
+        if not cls.GROQ_API_KEY and not cls.GEMINI_API_KEY:
             raise ValueError(
-                "GEMINI_API_KEY is not configured. "
-                "Add it to Streamlit Secrets or your local .env file."
+                "Neither GROQ_API_KEY nor GEMINI_API_KEY is configured. "
+                "Add GROQ_API_KEY to Streamlit Secrets or your local .env file."
             )
 
         if cls.MAX_RESEARCH_SOURCES < 1:
