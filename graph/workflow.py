@@ -45,7 +45,7 @@ def _extract_text(content) -> str:
 
 
 def _llm():
-    model_setting = str(getattr(config, "MODEL_NAME", "groq/llama-3.3-70b-versatile")).strip()
+    model_setting = str(getattr(config, "MODEL_NAME", "groq/llama-3.1-8b-instant")).strip()
     model_lower = model_setting.lower()
 
     if "groq" in model_lower or "llama" in model_lower:

@@ -47,7 +47,7 @@ class Config:
     # Default model ID for Groq
     MODEL_NAME: str = get_setting(
         "MODEL_NAME",
-        "llama-3.3-70b-versatile"
+        "llama-3.1-8b-instant"
     )
 
     TEMPERATURE: float = float(
